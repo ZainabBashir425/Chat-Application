@@ -19,7 +19,6 @@ const userSchema = new Schema(
     },
     avatar: {
       type: String,
-      required: true,
     },
     password: {
       type: String,
@@ -28,6 +27,14 @@ const userSchema = new Schema(
     refreshToken: {
       type: String,
     },
+    isOnline: {
+  type: Boolean,
+  default: false,
+},
+lastSeen: {
+  type: Date,
+  default: Date.now,
+}
   },
   { timestamps: true }
 );

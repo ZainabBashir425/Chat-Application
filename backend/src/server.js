@@ -5,6 +5,7 @@ dotenv.config({
 
 import http from "http";
 import { Server } from "socket.io";
+import { initSocket } from "./sockets/socketHandler.js";
 import { connectDB } from "./config/db.js";
 import app from "./app.js";
 
@@ -22,14 +23,7 @@ const io = new Server(server, {
   },
 });
 
-// Socket handler will go here
-io.on("connection", (socket) => {
-  console.log("New client connected", socket.id);
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected", socket.id);
-  });
-});
+initSocket(io);
 
 const PORT = process.env.PORT || 8006;
 server.listen(PORT, () => {
