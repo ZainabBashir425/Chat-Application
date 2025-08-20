@@ -1,5 +1,6 @@
 const onlineUsers = new Map(); // userId -> socketId
 import { User } from "../models/user.model.js";
+import { Message } from "../models/message.model.js";
 
 export const initSocket = (io) => {
   io.on("connection", (socket) => {

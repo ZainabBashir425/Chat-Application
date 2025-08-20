@@ -93,6 +93,8 @@ export const editMessage = asyncHandler(async (req, res) => {
   message.editedAt = new Date();
   await message.save();
 
+  req.app.get("io").to(message.chat.toString()).emit("message-edited", message);
+
   res.status(200).json(new ApiResponse(200,message,"Message edited Successfully"));
 });
 
@@ -103,6 +105,11 @@ export const deleteMessage = asyncHandler(async (req, res) => {
   if (!message) throw new ApiError(404,"Not found");
   if (!message.sender.equals(req.user._id))
     throw new ApiError(403,"Unauthorized")
+
+  req.app.get("io").to(message.chat.toString()).emit("message-deleted", {
+  _id: message._id,
+  chat: message.chat,
+});
 
   await message.deleteOne();
   res.status(200).json(new ApiResponse(200,"Message Deleted Succesfully"));

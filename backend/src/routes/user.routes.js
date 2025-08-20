@@ -10,11 +10,12 @@ import {
   getCurrentUser,
   updateAccountDetails,
   updateUserAvatar,
+  getAllUsers
 } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
 const router = Router();
-
+router.get("/", verifyJWT, getAllUsers);
 router.route("/register").post(registerUser);
 
 router.route("/login").post(loginUser);

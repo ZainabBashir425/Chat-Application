@@ -196,6 +196,16 @@ const getCurrentUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, req.user, "Current user fetched successfully"));
 });
 
+const getAllUsers = asyncHandler(async (req, res) => {
+  // exclude current logged in user
+  const users = await User.find({ _id: { $ne: req.user._id } })
+    .select("-password -refreshToken");
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { users }, "Users fetched successfully"));
+});
+
 const updateAccountDetails = asyncHandler(async (req, res) => {
   const { fullName, email } = req.body;
 
@@ -250,4 +260,5 @@ export {
   getCurrentUser,
   updateAccountDetails,
   updateUserAvatar,
+  getAllUsers
 };

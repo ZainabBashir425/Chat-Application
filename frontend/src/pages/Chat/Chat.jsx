@@ -6,74 +6,132 @@ import {
   ChevronDown,
   Search,
 } from "lucide-react";
+import { socket } from "@/services/socket";
+import avatarDefault from "../../assets/avatar.png";
 
 export default function ChatApp() {
   // --- Demo users ---
-  const [users] = useState([
-    {
-      id: 1,
-      name: "Sarah Wilson",
-      lastMessage: "Sure, let's meet tomorrow!",
-      avatar: "https://i.pravatar.cc/80?img=1",
-      time: "2m ago",
-      isOnline: true,
-    },
-    {
-      id: 2,
-      name: "Michael Chen",
-      lastMessage: "The project looks great!",
-      avatar: "https://i.pravatar.cc/80?img=11",
-      time: "5m ago",
-      isOnline: true,
-    },
-    {
-      id: 3,
-      name: "Emma Davis",
-      lastMessage: "Thanks for your help",
-      avatar: "https://i.pravatar.cc/80?img=5",
-      time: "1h ago",
-      isOnline: false,
-    },
-    {
-      id: 4,
-      name: "Ava Thompson",
-      lastMessage: "Ping me when free",
-      avatar: "https://i.pravatar.cc/80?img=7",
-      time: "3h ago",
-      isOnline: false,
-    },
-  ]);
+  const [users, setUsers] = useState([]);
 
   const [activeUserId, setActiveUserId] = useState(null);
-  const activeUser = useMemo(
-    () => users.find((u) => u.id === activeUserId) || null,
-    [users, activeUserId]
-  );
 
   const [messages, setMessages] = useState({});
   const [input, setInput] = useState("");
   const [showFileOptions, setShowFileOptions] = useState(false);
   const [search, setSearch] = useState("");
+  const [selectedChat, setSelectedChat] = useState(null);
 
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const chatBottomRef = useRef(null);
+  useEffect(() => {
+    const fetchMe = async () => {
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_BACKEND_URL}/api/v1/users/current-user`,
+          { credentials: "include" }
+        );
+        if (!res.ok) throw new Error("Failed to fetch user");
+        const data = await res.json();
+       // console.log("Current user:", data);
+        setActiveUserId(data.data._id); // save your own id
+      } catch (err) {
+        console.error("Failed to fetch current user:", err);
+      }
+    };
+    fetchMe();
+  }, []);
+
+  const handleSelectUser = async (userId) => {
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/chats`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId }),
+        }
+      );
+      if (!res.ok) {
+        const errorData = await res.json();
+        console.error(errorData);
+        return;
+      }
+      const data = await res.json();
+      console.log(data.data);
+
+      const chat = data.data;
+
+      const members = chat?.members || [];
+      // pick the other user (not the current one)
+      const otherUser = members.find((m) => m._id !== activeUserId);
+
+      const mapped = {
+        id: chat._id,
+        name: otherUser?.fullName || "Unknown",
+        lastMessage: chat.lastMessage?.content || "No messages yet",
+        avatar: otherUser?.avatar || avatarDefault,
+        lastSeen: otherUser?.lastSeen || "",
+        time: chat.updatedAt
+          ? new Date(chat.updatedAt).toLocaleTimeString()
+          : "",
+        isOnline: otherUser?.isOnline || false,
+      };
+
+      socket.emit("join-chat", chat._id);
+      const msgRes = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages/${chat._id}`,
+        { credentials: "include" }
+      );
+      if (msgRes.ok) {
+        const msgData = await msgRes.json();
+        setMessages((prev) => ({
+          ...prev,
+          [chat._id]: msgData.data || [],
+        }));
+        console.log("Messages for chat:", messages[chat._id]);
+      }
+      setSelectedChat(mapped);
+    } catch (err) {
+      console.error("Error selecting user:", err);
+    }
+  };
+
+  useEffect(() => {
+    const fetchChats = async () => {
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_BACKEND_URL}/api/v1/users`,
+          {
+            method: "GET",
+            credentials: "include", // ✅ sends cookies with JWT
+          }
+        );
+        if (!res.ok) throw new Error("Failed to fetch users");
+        const data = await res.json();
+
+        // data should be array of users [{ _id, name, email, avatar, ... }]
+        setUsers(data.data.users || []);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    fetchChats();
+  }, []);
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return users;
-    return users.filter((u) => u.name.toLowerCase().includes(q));
+    return users.filter((u) => u.fullName.toLowerCase().includes(q));
   }, [users, search]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeUserId]);
 
-  const nowTime = () => {
-    const d = new Date();
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
 
   const pushMessage = (userId, msg) => {
     setMessages((prev) => ({
@@ -83,82 +141,180 @@ export default function ChatApp() {
   };
 
   const handleSendMessage = () => {
-    if (!activeUser) return;
+    if (!selectedChat) return;
     const text = input.trim();
     if (!text) return;
     if (editingId) {
-      // Edit existing
-      setMessages((prev) => ({
-        ...prev,
-        [activeUser.id]: (prev[activeUser.id] || []).map((m) =>
-          m.id === editingId ? { ...m, text } : m
-        ),
-      }));
+      // Edit existing message
+      fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages/edit/${editingId}`,
+        {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text }),
+        }
+      )
+        .then((res) => res.json())
+        .then((data) => {
+          setMessages((prev) => ({
+            ...prev,
+            [selectedChat.id]: (prev[selectedChat.id] || []).map((m) =>
+              m.id === editingId ? { ...m, text: data.data.content } : m
+            ),
+          }));
+        })
+        .catch((err) => console.error("Edit failed:", err));
+
       setEditingId(null);
     } else {
-      // New message
-      pushMessage(activeUser.id, {
-        id: crypto.randomUUID(),
-        type: "text",
-        text,
-        sender: "me",
-        time: nowTime(),
-      });
+      // New message (send to backend)
+      fetch(`${import.meta.env.VITE_BACKEND_URL}/api/v1/messages`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: selectedChat.id,
+          content: text,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          const msg = {
+            id: data.data._id,
+            type: "text",
+            content: data.data.content,
+            sender: {id:data.data.sender._id,avatar:data.data.sender.avatar},
+            createdAt: data.data.createdAt || new Date().toISOString(),
+          };
+          pushMessage(selectedChat.id, msg);
+          socket.emit("send-message", { chatId: selectedChat.id, message: msg })
+        })
+        .catch((err) => console.error("Send failed:", err));
     }
     setInput("");
   };
 
   // File handlers
-  const handleImagePicked = (e) => {
-    if (!activeUser) return;
+  const handleImagePicked = async (e) => {
+    if (!selectedChat) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    pushMessage(activeUser.id, {
-      id: crypto.randomUUID(),
-      type: "image",
-      url,
-      name: file.name,
-      size: file.size,
-      sender: "me",
-      time: nowTime(),
-    });
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("chatId", selectedChat.id);
+
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        }
+      );
+      const data = await res.json();
+
+      const msg = {
+        id: data.data._id,
+        type: "image",
+        url: data.data.file.url,
+        name: file.name,
+        size: file.size,
+        sender: "me",
+        time: new Date(data.data.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      };
+      pushMessage(selectedChat.id, msg);
+    } catch (err) {
+      console.error("Image send failed:", err);
+    }
+
     e.target.value = "";
     setShowFileOptions(false);
   };
 
-  const handleVideoPicked = (e) => {
-    if (!activeUser) return;
+  const handleVideoPicked = async (e) => {
+        if (!selectedChat) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    pushMessage(activeUser.id, {
-      id: crypto.randomUUID(),
-      type: "video",
-      url,
-      name: file.name,
-      size: file.size,
-      sender: "me",
-      time: nowTime(),
-    });
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("chatId", selectedChat.id);
+
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        }
+      );
+      const data = await res.json();
+
+      const msg = {
+        id: data.data._id,
+        type: "video",
+        url: data.data.file.url,
+        name: file.name,
+        size: file.size,
+        sender: "me",
+        time: new Date(data.data.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      };
+      pushMessage(selectedChat.id, msg);
+    } catch (err) {
+      console.error("Video send failed:", err);
+    }
+
     e.target.value = "";
     setShowFileOptions(false);
   };
 
-  const handleFilePicked = (e) => {
-    if (!activeUser) return;
+  const handleFilePicked = async (e) => {
+        if (!selectedChat) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    pushMessage(activeUser.id, {
-      id: crypto.randomUUID(),
-      type: "file",
-      url,
-      name: file.name,
-      size: file.size,
-      sender: "me",
-      time: nowTime(),
-    });
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("chatId", selectedChat.id);
+
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        }
+      );
+      const data = await res.json();
+
+      const msg = {
+        id: data.data._id,
+        type: "file",
+        url: data.data.file.url,
+        name: file.name,
+        size: file.size,
+        sender: "me",
+        time: new Date(data.data.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      };
+      pushMessage(selectedChat.id, msg);
+    } catch (err) {
+      console.error("File send failed:", err);
+    }
+
     e.target.value = "";
     setShowFileOptions(false);
   };
@@ -180,14 +336,53 @@ export default function ChatApp() {
     }
   };
 
-  const deleteMessage = (m) => {
-    if (!activeUser) return;
-    setMessages((prev) => ({
-      ...prev,
-      [activeUser.id]: (prev[activeUser.id] || []).filter((x) => x.id !== m.id),
-    }));
+  const deleteMessage = async (m) => {
+    if (!selectedChat) return;
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/api/v1/messages/${m.id}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      );
+      if (res.ok) {
+        setMessages((prev) => ({
+          ...prev,
+          [selectedChat.id]: (prev[selectedChat.id] || []).filter(
+            (x) => x.id !== m.id
+          ),
+        }));
+      }
+    } catch (err) {
+      console.error("Delete failed", err);
+    }
     setMenuOpenId(null);
   };
+
+  function formatLastSeen(lastSeen) {
+  if (!lastSeen) return "Last seen unavailable";
+
+  const date = new Date(lastSeen);
+  const now = new Date();
+
+  const isToday = date.toDateString() === now.toDateString();
+
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  if (isToday) {
+    return `Last seen today at ${time}`;
+  } else {
+    const dayMonth = date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+    });
+    return `Last seen at ${dayMonth}, ${time}`;
+  }
+}
 
   const [editingId, setEditingId] = useState(null);
 
@@ -201,17 +396,21 @@ export default function ChatApp() {
   // UI pieces
   const UserRow = ({ u }) => (
     <div
-      onClick={() => setActiveUserId(u.id)}
+      onClick={() => handleSelectUser(u._id)}
       className="flex items-center gap-3 p-3 hover:bg-[#1E1E1E] cursor-pointer"
     >
       <div className="relative">
-        <img src={u.avatar} alt={u.name} className="w-10 h-10 rounded-full" />
+        <img
+          src={u.avatar || avatarDefault}
+          alt={u.fullName}
+          className="w-10 h-10 rounded-full"
+        />
         {u.isOnline && (
           <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full ring-2 ring-[#121212]" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-semibold truncate">{u.name}</p>
+        <p className="font-semibold truncate">{u.fullName}</p>
         <p className="text-gray-400 text-sm truncate">{u.lastMessage}</p>
       </div>
       <span className="text-xs text-gray-500 whitespace-nowrap">{u.time}</span>
@@ -219,7 +418,7 @@ export default function ChatApp() {
   );
 
   const MessageBubble = ({ m }) => {
-    const mine = m.sender === "me";
+    const mine = m.sender._id === activeUserId || m.sender.id === activeUserId;;
     const bubbleBase = mine
       ? "bg-[#00B8D4] text-black ml-auto"
       : "bg-[#2C2C2C] text-white";
@@ -233,7 +432,7 @@ export default function ChatApp() {
         <div className={`relative rounded-lg ${bubbleBase}`}>
           {m.type === "text" && (
             <div className="whitespace-pre-wrap text-white px-3 py-2">
-              {m.text}
+              {m.content}
             </div>
           )}
           {m.type === "image" && (
@@ -263,62 +462,58 @@ export default function ChatApp() {
 
           {/* Actions menu button - only on hover */}
           <button
-            className={`absolute top-0 ${
-              mine ? "right-1" : "left-1"
-            } p-1 rounded-full text-white opacity-0 group-hover:opacity-100 transition`}
+            className={`absolute top-0 right-1 p-1 rounded-full text-white opacity-0 group-hover:opacity-100 transition`}
             onClick={() => toggleMenu(m.id)}
             title="Message actions"
           >
             <ChevronDown size={18} />
             {menuOpenId === m.id && (
-            <div
-              className={`absolute z-10 ${
-                mine ? "right-0 top-full" : "left-0 top-full"
-              } mt-1 bg-[#1E1E1E] rounded-md shadow-lg text-white min-w-[140px]`}
-            >
-              {m.type !== "text" ? (
-                <>
-                  <a
-                    href={m.url}
-                    download={m.name}
-                    className="block text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
-                  >
-                    Download
-                  </a>
-                  <button
-                    onClick={() => deleteMessage(m)}
-                    className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
-                  >
-                    Delete
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => copyMessage(m)}
-                    className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
-                  >
-                    Copy
-                  </button>
-                  <button
-                    onClick={() => startEdit(m)}
-                    className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => deleteMessage(m)}
-                    className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
-                  >
-                    Delete
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+              <div
+                className={`absolute z-10 ${
+                  mine ? "right-0 top-full" : "left-0 top-full"
+                } mt-1 bg-[#1E1E1E] rounded-md shadow-lg text-white min-w-[140px]`}
+              >
+                {m.type !== "text" ? (
+                  <>
+                    <a
+                      href={m.url}
+                      download={m.name}
+                      className="block text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
+                    >
+                      Download
+                    </a>
+                    <button
+                      onClick={() => deleteMessage(m)}
+                      className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => copyMessage(m)}
+                      className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
+                    >
+                      Copy
+                    </button>
+                    {mine &&(<button
+                      onClick={() => startEdit(m)}
+                      className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
+                    >
+                      Edit
+                    </button>)}
+                    <button
+                      onClick={() => deleteMessage(m)}
+                      className="block w-full text-left px-3 py-2 rounded-md hover:bg-[#2C2C2C]"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </button>
-
-          
         </div>
         <div
           className={`text-xs text-gray-400 mt-1 ${
@@ -338,7 +533,7 @@ export default function ChatApp() {
       {/* User List */}
       <div
         className={`w-full md:w-1/3 lg:w-1/4 bg-[#1E1E1E]  overflow-y-auto ${
-          activeUser ? "hidden md:block" : "block"
+          selectedChat ? "hidden md:block" : "block"
         }`}
       >
         <div className="p-3 sticky top-0 bg-[#1E1E1E] z-10 flex items-center">
@@ -354,45 +549,68 @@ export default function ChatApp() {
           </div>
         </div>
         {filteredUsers.map((u) => (
-          <UserRow key={u.id} u={u} />
+          <UserRow key={u._id} u={u} />
         ))}
       </div>
       {/* Chat Window */}
       <div className="flex-1 flex flex-col">
-        {activeUser ? (
+        {selectedChat ? (
           <>
             {/* Chat Header */}
             <div className="flex items-center bg-[#1E1E1E]  gap-3 p-3">
               <button
                 className="md:hidden mr-1"
-                onClick={() => setActiveUserId(null)}
+                onClick={() => setSelectedChat(null)}
               >
                 <ChevronLeft />
               </button>
               <img
-                src={activeUser.avatar}
-                alt={activeUser.name}
+                src={selectedChat.avatar}
+                alt={selectedChat.name}
                 className="w-8 h-8 rounded-full"
               />
               <div className="flex-1 min-w-0">
-                <p className="font-semibold truncate">{activeUser.name}</p>
+                <p className="font-semibold truncate">{selectedChat.name}</p>
                 <p
                   className={`text-sm ${
-                    activeUser.isOnline ? "text-green-500" : "text-gray-400"
+                    selectedChat.isOnline ? "text-green-500" : "text-gray-400"
                   }`}
                 >
-                  {activeUser.isOnline ? "Online" : "Offline"}
+                  {selectedChat.isOnline ? "Online" : selectedChat.lastSeen
+                    ? formatLastSeen(selectedChat.lastSeen)
+                    : "Offline"}
                 </p>
               </div>
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-              {(messages[activeUser.id] || []).map((m) => (
-                <MessageBubble key={m.id} m={m} />
-              ))}
-              <div ref={chatBottomRef} />
-            </div>
+  {(messages[selectedChat.id]).map((msg) => {
+    // Normalize backend message
+    const normalized = {
+      id: msg._id,
+      sender: msg.sender,
+      content: msg.content,
+      time: new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      ...(msg.file
+        ? {
+            type: msg.file.type.startsWith("image")
+              ? "image"
+              : msg.file.type.startsWith("video")
+              ? "video"
+              : "file",
+            url: msg.file.url,
+            name: msg.file.public_id, // or extract filename
+            size: msg.file.size || null,
+          }
+        : { type: "text" }),
+    };
+
+    return <MessageBubble key={normalized.id} m={normalized} />;
+  })}
+  <div ref={chatBottomRef} />
+</div>
+
 
             {/* File options above paperclip */}
             {showFileOptions && (

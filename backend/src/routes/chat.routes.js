@@ -5,8 +5,6 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 const router = Router();
 
 router.route("/status/:userId").get(getUserOnlineStatus);
-
-
 router.post("/", verifyJWT, accessChat);          // Create/access a chat
 router.get("/", verifyJWT, getUserChats);         // Fetch all user's chats
 
